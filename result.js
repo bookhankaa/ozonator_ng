@@ -4,7 +4,8 @@ let sortField = 'date';
 let sortAsc = false;
 
 async function init() {
-  const data = await chrome.storage.local.get('ozonOrders');
+  const data = await chrome.storage.local.get(['ozonOrders', 'ozonPageType']);
+  window.ozonPageType = data.ozonPageType || 'e-check';
   allOrders = (data.ozonOrders || []).map(o => {
     let ts = o.timestamp;
     if (!ts && o.dateObj) {
@@ -29,8 +30,8 @@ async function init() {
   if (allOrders.length > 0) {
     const timestamps = allOrders.map(o => o.timestamp).filter(Boolean);
     if (timestamps.length) {
-      fromInput.value = formatInputDate(new Date(Math.min(...timestamps)));
-      toInput.value = formatInputDate(new Date(Math.max(...timestamps)));
+      fromInput.min = formatInputDate(new Date(Math.min(...timestamps)));
+      toInput.max = formatInputDate(new Date(Math.max(...timestamps)));
     }
   }
 
@@ -50,7 +51,7 @@ async function init() {
         sortAsc = !sortAsc;
       } else {
         sortField = field;
-        sortAsc = field === 'price' || field === 'name' || field === 'status';
+        sortAsc = field === 'price' || field === 'name' || field === 'status' || field === 'payment';
       }
       // Brief visual confirmation
       th.classList.add('sort-flash');
@@ -110,11 +111,19 @@ function flattenOrders() {
         let name = item.name || '';
         const qty = item.qtyPayment || '';
         if (!name && qty) name = qty;
+        let paid = 'НЕТ';
+        if (window.ozonPageType === 'e-check') {
+          paid = 'ДА';
+        } else {
+          const rawPayment = (item.payment || '').toLowerCase();
+          if (rawPayment.includes('оплач') && !rawPayment.includes('не ')) paid = 'ДА';
+        }
         rows.push({
           img: item.img,
           name: name,
           price: item.price || 0,
           status: item.status || '—',
+          paid: paid,
           orderId: order.id,
           orderLink: order.link,
           dateStr: order.dateStr || '—',
@@ -127,6 +136,7 @@ function flattenOrders() {
         name: '',
         price: order.price,
         status: '—',
+        paid: window.ozonPageType === 'e-check' ? 'ДА' : 'НЕТ',
         orderId: order.id,
         orderLink: order.link,
         dateStr: order.dateStr || '—',
@@ -161,7 +171,7 @@ function applyFiltersAndSort() {
     if (priceFrom && r.price < +priceFrom) return false;
     if (priceTo && r.price > +priceTo) return false;
     if (searchRaw) {
-      const haystack = [r.name, r.orderId, r.dateStr, String(r.price), r.status].join(' ').toLowerCase();
+      const haystack = [r.name, r.orderId, r.dateStr, String(r.price), r.status, r.paid].join(' ').toLowerCase();
       const hasNegated = negatedTerms.some(t => haystack.includes(t));
       if (hasNegated) return false;
       if (positiveTerms.length > 0 && !positiveTerms.some(t => haystack.includes(t))) return false;
@@ -177,6 +187,10 @@ function applyFiltersAndSort() {
     }
     if (sortField === 'status') {
       const cmp = (a.status || '').localeCompare(b.status || '', 'ru');
+      return sortAsc ? cmp : -cmp;
+    }
+    if (sortField === 'payment') {
+      const cmp = (a.paid || '').localeCompare(b.paid || '', 'ru');
       return sortAsc ? cmp : -cmp;
     }
     if (sortField === 'id') {
@@ -203,7 +217,7 @@ function render() {
   tbody.innerHTML = '';
 
   if (filteredRows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6">Нет позиций по заданным фильтрам</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7">Нет позиций по заданным фильтрам</td></tr>';
     document.getElementById('summary').textContent = '0 позиций';
     updateSortArrows();
     return;
@@ -251,16 +265,27 @@ function render() {
     statusTd.className = 'status-cell';
     statusTd.textContent = row.status || '—';
 
+    // Payment cell
+    const paidTd = document.createElement('td');
+    paidTd.className = 'status-cell';
+    paidTd.textContent = row.paid || 'НЕТ';
+
     // Price cell
     const priceTd = document.createElement('td');
     priceTd.className = 'price-cell';
     priceTd.textContent = formatPrice(row.price);
+    if (row.paid === 'ДА') {
+      priceTd.style.color = '#16a34a';
+    } else {
+      priceTd.style.color = '#000';
+    }
 
     tr.appendChild(imgTd);
     tr.appendChild(nameTd);
     tr.appendChild(idTd);
     tr.appendChild(dateTd);
     tr.appendChild(statusTd);
+    tr.appendChild(paidTd);
     tr.appendChild(priceTd);
 
     tbody.appendChild(tr);

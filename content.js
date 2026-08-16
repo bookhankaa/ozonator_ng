@@ -19,7 +19,6 @@ function normalizeWhitespace(text) {
   return text.replace(/[\u00A0\u202F\u200B\u200C\u200D\uFEFF]/g, ' ').trim();
 }
 
-// E-check: "16 августа 2026 в 02:03"
 function parseDateECheck(text) {
   const normalized = normalizeWhitespace(text);
   const match = normalized.match(/(\d{1,2})\s+(\w+)\s+(\d{4})\s+в\s+(\d{2}):(\d{2})/);
@@ -30,13 +29,10 @@ function parseDateECheck(text) {
   return new Date(+year, month, +day, +hour, +minute);
 }
 
-// Orderlist: "Ожидаем 16 августа, воскресенье" или "9 – 17 сентября"
 function parseDateOrderlist(text) {
   const normalized = normalizeWhitespace(text);
-  // "Ожидаем 16 августа, воскресенье"
   let match = normalized.match(/(\d{1,2})\s+([а-яё]+)\s*,/);
   if (!match) {
-    // "9 – 17 сентября" or "Получен 15 августа"
     match = normalized.match(/(\d{1,2})\s+([а-яё]+)/);
   }
   if (!match) return null;
@@ -60,6 +56,11 @@ function extractOrderFromHref(href) {
 function isCancelled(statusText) {
   if (!statusText) return false;
   return statusText.toLowerCase().includes('отмен');
+}
+
+function isReceived(statusText) {
+  if (!statusText) return false;
+  return statusText.toLowerCase().includes('получен');
 }
 
 // ---- E-check page functions ----
@@ -114,10 +115,46 @@ async function fetchPage(url) {
   }
 }
 
+async function fetchItemNames(order) {
+  const html = await fetchPage(order.link);
+  if (!html) return;
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+
+  // Build map: img src hash -> name
+  const nameMap = new Map();
+  const widgets = doc.querySelectorAll('[data-widget="shipmentWidget"]');
+  for (const widget of widgets) {
+    const rows = widget.querySelectorAll('.ek3_12');
+    for (const row of rows) {
+      const img = row.querySelector('.aw15_5_2-a img');
+      if (!img) continue;
+      let imgSrc = img.src || img.getAttribute('data-src');
+      if (!imgSrc) continue;
+      if (imgSrc.startsWith('//')) imgSrc = 'https:' + imgSrc;
+      else if (imgSrc.startsWith('/')) imgSrc = 'https://www.ozon.ru' + imgSrc;
+      const nameEl = row.querySelector('.e5k_12.k5e_12 span.tsCompact500Medium');
+      const name = nameEl ? nameEl.textContent.trim() : '';
+      if (name) {
+        nameMap.set(imgSrc, name);
+      }
+    }
+  }
+
+  // Match items by img src
+  for (const item of (order.items || [])) {
+    if (nameMap.has(item.img)) {
+      item.name = nameMap.get(item.img);
+    }
+  }
+}
+
 async function fetchOrderDetails(order) {
   const html = await fetchPage(order.link);
   if (!html) return;
 
+  order.items = [];
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
   const seenImages = new Set();
@@ -125,6 +162,7 @@ async function fetchOrderDetails(order) {
   const widgets = doc.querySelectorAll('[data-widget="shipmentWidget"]');
   for (const widget of widgets) {
     let widgetStatus = '';
+    let widgetCancelled = false;
     const statusContainers = widget.querySelectorAll('.cy2_12');
     for (const container of statusContainers) {
       const texts = [];
@@ -132,14 +170,15 @@ async function fetchOrderDetails(order) {
         texts.push(span.textContent.trim());
       });
       if (texts.length && texts.join(' ').toLowerCase().includes('отмен')) {
-        order.cancelled = true;
-        return;
+        widgetCancelled = true;
+        widgetStatus = texts.join(' ');
+        break;
       }
       if (texts.length && !widgetStatus) {
         widgetStatus = texts.join(' ');
       }
     }
-    if (!widgetStatus) {
+    if (!widgetStatus && !widgetCancelled) {
       const headline = widget.querySelector('.tsHeadline550Medium');
       if (headline) {
         const cy3 = headline.closest('.cy2_12');
@@ -147,17 +186,21 @@ async function fetchOrderDetails(order) {
           const allSpans = cy3.querySelectorAll('.tsHeadline550Medium');
           widgetStatus = Array.from(allSpans).map(s => s.textContent.trim()).join(' ');
           if (widgetStatus.toLowerCase().includes('отмен')) {
-            order.cancelled = true;
-            return;
+            widgetCancelled = true;
           }
         }
       }
     }
-    if (!widgetStatus) {
+    if (!widgetStatus && !widgetCancelled) {
       const dateSpan = widget.querySelector('.tsBodyControl500Medium');
       if (dateSpan) {
         widgetStatus = dateSpan.textContent.trim().replace(/^Ожидаемая дата:\s*/, '');
       }
+    }
+
+    if (widgetCancelled) {
+      order.cancelled = true;
+      continue;
     }
 
     const productRows = widget.querySelectorAll('.ek3_12');
@@ -228,18 +271,22 @@ function parseItemsFromOrderlist(container, orderStatus) {
     const priceText = priceEl ? normalizeWhitespace(priceEl.textContent) : '';
     const itemPrice = priceText ? parsePrice(priceText) : 0;
 
-    const statusDiv = itemContainer.querySelector('.b5_7_3-a3 div[title]');
-    let qtyOrPayment = '';
-    if (statusDiv) {
-      qtyOrPayment = normalizeWhitespace(statusDiv.textContent);
-    }
+    // Payment badge: "Оплачен" / "Не оплачен"
+    let payment = '';
+    const badges = itemContainer.querySelectorAll('.b5_7_3-a4[title]');
+    badges.forEach(badge => {
+      const title = normalizeWhitespace(badge.textContent);
+      if (title.toLowerCase().includes('оплач')) {
+        payment = title;
+      }
+    });
 
     items.push({
       img: imgSrc,
       name: '',
       price: itemPrice,
       status: orderStatus || '—',
-      qtyPayment: qtyOrPayment
+      payment: payment
     });
   });
 
@@ -256,7 +303,7 @@ function parseOrderRowOrderlist(container) {
 
   const status = parseOrderStatusOrderlist(container);
 
-  if (isCancelled(status)) {
+  if (isCancelled(status) || isReceived(status)) {
     return { id: orderNum, cancelled: true };
   }
 
@@ -415,6 +462,7 @@ async function collectFromOrderlist(maxOrders) {
   updateProgress(0, maxOrders, 'Сбор заказов');
 
   let noNewContentCount = 0;
+  const seenContainers = new Set();
 
   while (orders.length < maxOrders && noNewContentCount < 5) {
     const containers = findOrderRowsOrderlist();
@@ -423,20 +471,14 @@ async function collectFromOrderlist(maxOrders) {
     for (const container of containers) {
       const parsed = parseOrderRowOrderlist(container);
       if (!parsed || parsed.cancelled) continue;
-      if (orders.find(o => o.id === parsed.id)) continue;
+
+      // Skip if this exact DOM element was already processed
+      if (seenContainers.has(container)) continue;
+      seenContainers.add(container);
 
       orders.push(parsed);
       addedCount++;
     }
-
-    const uniqueMap = new Map();
-    orders.forEach(o => {
-      const existing = uniqueMap.get(o.id);
-      if (!existing || o.items.length > existing.items.length || o.timestamp > existing.timestamp) {
-        uniqueMap.set(o.id, o);
-      }
-    });
-    orders = [...uniqueMap.values()];
 
     if (orders.length === maxOrders) break;
     if (addedCount === 0) {
@@ -456,6 +498,11 @@ async function collectFromOrderlist(maxOrders) {
     showErrorMessage();
     isCollecting = false;
     return;
+  }
+
+  for (let i = 0; i < orders.length; i++) {
+    updateProgress(i + 1, orders.length, 'Загрузка названий');
+    await fetchItemNames(orders[i]);
   }
 
   saveAndShowResult();
@@ -480,7 +527,7 @@ function saveAndShowResult() {
     };
   });
 
-  chrome.storage.local.set({ ozonOrders: serialized });
+  chrome.storage.local.set({ ozonOrders: serialized, ozonPageType: pageType });
 
   if (window._ozonBtn) {
     updateProgress('\u2713', '\u2713', 'Готово');
