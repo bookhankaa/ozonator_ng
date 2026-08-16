@@ -290,6 +290,9 @@ function render() {
     const statusTd = document.createElement('td');
     statusTd.className = 'status-cell';
     statusTd.textContent = row.status || '—';
+    if ((row.status || '').includes('Можно забирать')) {
+      statusTd.style.color = '#16a34a';
+    }
 
     // Payment cell
     const paidTd = document.createElement('td');
