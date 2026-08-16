@@ -2,6 +2,7 @@ let allOrders = [];
 let filteredRows = [];
 let sortField = 'date';
 let sortAsc = false;
+const checkedState = new Map();
 
 async function init() {
   const data = await chrome.storage.local.get(['ozonOrders', 'ozonPageType']);
@@ -40,7 +41,9 @@ async function init() {
   document.getElementById('priceFrom').addEventListener('input', render);
   document.getElementById('priceTo').addEventListener('input', render);
   document.getElementById('searchInput').addEventListener('input', render);
+  document.getElementById('hideUnchecked').addEventListener('change', render);
   document.getElementById('downloadBtn').addEventListener('click', downloadHTML);
+  document.getElementById('toggleAll').addEventListener('click', invertChecked);
 
   document.querySelectorAll('th[data-sort]').forEach(th => {
     th.addEventListener('click', (e) => {
@@ -118,6 +121,7 @@ function flattenOrders() {
           const rawPayment = (item.payment || '').toLowerCase();
           if (rawPayment.includes('оплач') && !rawPayment.includes('не ')) paid = 'ДА';
         }
+        const rowKey = `${order.id}|${name}|${item.price || 0}`;
         rows.push({
           img: item.img,
           name: name,
@@ -127,10 +131,13 @@ function flattenOrders() {
           orderId: order.id,
           orderLink: order.link,
           dateStr: order.dateStr || '—',
-          timestamp: ts
+          timestamp: ts,
+          key: rowKey,
+          checked: checkedState.get(rowKey) !== false
         });
       });
     } else {
+      const rowKey = `${order.id}|no-item|${order.price}`;
       rows.push({
         img: null,
         name: '',
@@ -140,7 +147,9 @@ function flattenOrders() {
         orderId: order.id,
         orderLink: order.link,
         dateStr: order.dateStr || '—',
-        timestamp: ts
+        timestamp: ts,
+        key: rowKey,
+        checked: checkedState.get(rowKey) !== false
       });
     }
   });
@@ -165,7 +174,9 @@ function applyFiltersAndSort() {
 
   let rows = flattenOrders();
 
+  const hideUnchecked = document.getElementById('hideUnchecked').checked;
   filteredRows = rows.filter(r => {
+    if (hideUnchecked && !r.checked) return false;
     if (dateFrom && r.timestamp && r.timestamp < new Date(dateFrom).getTime()) return false;
     if (dateTo && r.timestamp && r.timestamp > new Date(dateTo + 'T23:59:59').getTime()) return false;
     if (priceFrom && r.price < +priceFrom) return false;
@@ -217,14 +228,29 @@ function render() {
   tbody.innerHTML = '';
 
   if (filteredRows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7">Нет позиций по заданным фильтрам</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8">Нет позиций по заданным фильтрам</td></tr>';
     document.getElementById('summary').textContent = '0 позиций';
     updateSortArrows();
     return;
   }
 
-  filteredRows.forEach(row => {
+  filteredRows.forEach((row, idx) => {
     const tr = document.createElement('tr');
+
+    // Checkbox cell
+    const cbTd = document.createElement('td');
+    cbTd.style.cssText = 'text-align:center;width:36px;padding:8px;';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = row.checked;
+    cb.style.cssText = 'width:16px;height:16px;cursor:pointer;accent-color:#ddd;';
+    cb.addEventListener('change', () => {
+      filteredRows[idx].checked = cb.checked;
+      checkedState.set(row.key, cb.checked);
+      updateSummary();
+      setupSelectAll();
+    });
+    cbTd.appendChild(cb);
 
     // Image cell
     const imgTd = document.createElement('td');
@@ -236,9 +262,9 @@ function render() {
       img.title = row.name;
       img.className = 'product-img';
       img.loading = 'lazy';
-      img.style.cursor = 'pointer';
-      img.addEventListener('click', () => openImgModal(row.img, row.name));
-      imgTd.appendChild(img);
+       img.style.cursor = 'pointer';
+       img.addEventListener('click', () => openImgModalByIndex(idx));
+       imgTd.appendChild(img);
     } else {
       imgTd.appendChild(document.createTextNode('—'));
     }
@@ -280,6 +306,7 @@ function render() {
       priceTd.style.color = '#000';
     }
 
+    tr.appendChild(cbTd);
     tr.appendChild(imgTd);
     tr.appendChild(nameTd);
     tr.appendChild(idTd);
@@ -291,11 +318,43 @@ function render() {
     tbody.appendChild(tr);
   });
 
-  const total = filteredRows.reduce((sum, r) => sum + r.price, 0);
-  document.getElementById('summary').textContent =
-    `${filteredRows.length} позиций на сумму ${formatPrice(total)}`;
+  updateSummary();
 
   updateSortArrows();
+  setupSelectAll();
+}
+
+function setupSelectAll() {
+  const parent = document.getElementById('selectAll').parentNode;
+  const checkedCount = filteredRows.filter(r => r.checked).length;
+  const allChecked = checkedCount === filteredRows.length;
+  const someChecked = checkedCount > 0 && checkedCount < filteredRows.length;
+  const newValue = allChecked || someChecked;
+
+  // Create fresh element to avoid stale listeners
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.id = 'selectAll';
+  cb.style.cssText = 'width:16px;height:16px;cursor:pointer;accent-color:#ddd;';
+  cb.checked = newValue;
+  cb.indeterminate = someChecked;
+
+  cb.addEventListener('change', () => {
+    filteredRows.forEach(r => {
+      r.checked = cb.checked;
+      checkedState.set(r.key, cb.checked);
+    });
+    render();
+  });
+
+  parent.replaceChild(cb, document.getElementById('selectAll'));
+}
+
+function updateSummary() {
+  const total = filteredRows.filter(r => r.checked).reduce((sum, r) => sum + r.price, 0);
+  const checkedCount = filteredRows.filter(r => r.checked).length;
+  document.getElementById('summary').textContent =
+    `${checkedCount} из ${filteredRows.length} на сумму ${formatPrice(total)}`;
 }
 
 function updateSortArrows() {
@@ -311,6 +370,14 @@ function updateSortArrows() {
       if (arrow) arrow.className = 'sort-arrow';
     }
   }
+}
+
+function invertChecked() {
+  filteredRows.forEach(r => {
+    r.checked = !r.checked;
+    checkedState.set(r.key, r.checked);
+  });
+  render();
 }
 
 function downloadHTML() {
@@ -350,6 +417,69 @@ function openImgModal(src, title) {
       document.removeEventListener('keydown', handler);
     }
   });
+  document.body.appendChild(modal);
+}
+
+function openImgModalByIndex(startIndex) {
+  const checkedWithImages = filteredRows
+    .map((r, i) => ({ row: r, idx: i }))
+    .filter(p => p.row.checked && p.row.img);
+
+  if (!checkedWithImages.length) return;
+
+  let currentPos = 0;
+  for (let i = 0; i < checkedWithImages.length; i++) {
+    if (checkedWithImages[i].idx === startIndex) {
+      currentPos = i;
+      break;
+    }
+  }
+
+  const modal = document.createElement('div');
+  modal.className = 'img-modal';
+
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:12px;';
+
+  const img = document.createElement('img');
+
+  const caption = document.createElement('div');
+  caption.style.cssText = 'color:white;font-size:14px;text-align:center;max-width:90vw;';
+
+  function slideTo(pos) {
+    currentPos = pos;
+    const p = checkedWithImages[pos];
+    img.src = p.row.img;
+    img.alt = p.row.name || '';
+    caption.textContent = `${p.row.name || '—'}  (${pos + 1} / ${checkedWithImages.length})`;
+  }
+
+  slideTo(currentPos);
+
+  wrapper.appendChild(img);
+  wrapper.appendChild(caption);
+  modal.appendChild(wrapper);
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.remove();
+      document.removeEventListener('keydown', handler);
+    }
+  });
+
+  function handler(e) {
+    if (e.key === 'Escape') {
+      modal.remove();
+      document.removeEventListener('keydown', handler);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      slideTo((currentPos + 1) % checkedWithImages.length);
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      slideTo((currentPos - 1 + checkedWithImages.length) % checkedWithImages.length);
+    }
+  }
+  document.addEventListener('keydown', handler);
   document.body.appendChild(modal);
 }
 

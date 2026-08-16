@@ -357,17 +357,66 @@ function injectButton() {
   const container = document.createElement('div');
   container.id = 'ozon-extend-btn';
 
+  const selectContainer = document.createElement('span');
+  selectContainer.style.cssText = 'display:flex;gap:4px;';
+
   const select = document.createElement('select');
   select.id = 'ozon-limit-select';
   select.className = 'ozon-select';
-  const limits = pageType === 'orderlist' ? [25, 50, 100, 200, 500] : [25, 50, 100];
+  select.style.maxWidth = '70px';
+  const limits = [10, 20, 50, 100, 500];
   limits.forEach(n => {
     const opt = document.createElement('option');
     opt.value = n;
     opt.textContent = n;
-    if (n === (pageType === 'orderlist' ? 100 : 100)) opt.selected = true;
+    if (n === 100) opt.selected = true;
     select.appendChild(opt);
   });
+  const customOpt = document.createElement('option');
+  customOpt.value = 'custom';
+  customOpt.textContent = '...';
+  customOpt.disabled = true;
+  customOpt.hidden = true;
+  select.appendChild(customOpt);
+
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.id = 'ozon-limit-input';
+  input.className = 'ozon-select';
+  input.style.cssText = 'width:60px;padding:10px 8px !important;border:1px solid #ccc;border-radius:8px;font-size:14px;font-weight:600;font-family:system-ui,-apple-system,sans-serif;background:white;color:#333;cursor:text;outline:none;text-align:center;';
+  input.min = 1;
+  input.max = 1000;
+  input.placeholder = '—';
+  input.title = 'Введите вручную';
+
+  // Sync select ↔ input, select is just a quick picker, input is source of truth
+  let syncing = false;
+  input.value = select.value;
+  select.addEventListener('change', () => {
+    if (syncing || select.value === 'custom') return;
+    input.value = select.value;
+  });
+  input.addEventListener('input', () => {
+    syncing = true;
+    const val = parseInt(input.value, 10);
+    if (val && limits.includes(val)) select.value = String(val);
+    else select.value = 'custom';
+    syncing = false;
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') input.blur();
+  });
+  input.addEventListener('focus', () => {
+    input.style.borderColor = '#005bff';
+    input.style.boxShadow = '0 0 0 2px rgba(0,91,255,0.15)';
+  });
+  input.addEventListener('blur', () => {
+    input.style.borderColor = '#ccc';
+    input.style.boxShadow = 'none';
+  });
+
+  selectContainer.appendChild(select);
+  selectContainer.appendChild(input);
 
   const label = document.createElement('span');
   label.className = 'ozon-label';
@@ -379,10 +428,12 @@ function injectButton() {
 
   btn.onclick = async () => {
     if (isCollecting) return;
-    await collectOrders(parseInt(select.value, 10));
+    let limit = parseInt(input.value || select.value, 10);
+    if (!limit || limit < 1) limit = 100;
+    await collectOrders(limit);
   };
 
-  container.appendChild(select);
+  container.appendChild(selectContainer);
   container.appendChild(label);
   container.appendChild(btn);
   document.body.appendChild(container);
