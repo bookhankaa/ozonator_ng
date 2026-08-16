@@ -21,9 +21,8 @@ body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background
 .search-group input:focus { border-color: #005bff; outline: none; box-shadow: 0 0 0 2px rgba(0,91,255,0.15); }
 .summary { margin-left: auto; font-size: 14px; font-weight: 600; color: #333; align-self: center; white-space: nowrap; }
 .table-wrapper { background: white; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
-.table-scroll { max-height: calc(100vh - 20px); overflow: auto; }
-table { width: 100%; border-collapse: collapse; }
-thead { background: #fafafa; position: sticky; top: 0; z-index: 100; }
+table { width: 100%; border-collapse: separate; border-spacing: 0; }
+thead { background: #f0fdf4; position: sticky; z-index: 300; }
 th { text-align: left; padding: 12px 16px; font-size: 13px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid #eee; cursor: pointer; user-select: none; white-space: nowrap; }
 th.nosort { cursor: default; }
 th:hover:not(.nosort) { color: #005bff; }
@@ -38,10 +37,10 @@ th.sort-flash { animation: sort-flash-anim 0.4s ease; }
 .sort-arrow::before { content: ' ⇅'; opacity: 0.2; font-size: 11px; }
 .sort-arrow.asc::before { content: ' ▲'; opacity: 1; color: #005bff; font-size: 12px; }
 .sort-arrow.desc::before { content: ' ▼'; opacity: 1; color: #005bff; font-size: 12px; }
-tr { border-bottom: 1px solid #f0f0f0; }
-tr:nth-child(odd) { background: #ffffff; }
-tr:nth-child(even) { background: #f7f7f7; }
-tr:hover { background: #f0f4ff !important; }
+tbody tr { border-bottom: 1px solid #f0f0f0; }
+tbody tr:nth-child(odd) { background: #ffffff; }
+tbody tr:nth-child(even) { background: #f7f7f7; }
+tbody tr:hover { background: #f0f4ff !important; }
 td { padding: 12px 16px; vertical-align: top; }
 td a { color: #005bff; text-decoration: none; font-weight: 500; }
 td a:hover { text-decoration: underline; }
@@ -97,7 +96,6 @@ td a:hover { text-decoration: underline; }
     </div>
 
     <div class="table-wrapper">
-      <div class="table-scroll">
       <table id="ordersTable">
         <thead>
           <tr>
@@ -115,7 +113,6 @@ td a:hover { text-decoration: underline; }
           <tr><td colspan="8">Загрузка данных...</td></tr>
         </tbody>
       </table>
-      </div>
     </div>
   </div>
   <script src="result.js"></script>

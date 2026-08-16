@@ -64,6 +64,14 @@ async function init() {
   });
 
   render();
+  requestAnimationFrame(stickyThead);
+}
+
+function stickyThead() {
+  var thead = document.querySelector('thead');
+  if (!thead) return;
+  var rect = thead.getBoundingClientRect();
+  thead.style.top = Math.round(rect.top) + 'px';
 }
 
 function formatInputDate(date) {
