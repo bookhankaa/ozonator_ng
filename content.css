@@ -1,0 +1,77 @@
+#ozon-extend-btn {
+  position: fixed !important;
+  top: 20px !important;
+  right: 20px !important;
+  z-index: 100000 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+.ozon-select {
+  padding: 10px 8px !important;
+  border: 1px solid #ccc !important;
+  border-radius: 8px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  font-family: system-ui, -apple-system, sans-serif !important;
+  background: white !important;
+  color: #333 !important;
+  cursor: pointer !important;
+  outline: none !important;
+}
+
+.ozon-select:focus {
+  border-color: #005bff !important;
+  box-shadow: 0 0 0 2px rgba(0,91,255,0.15) !important;
+}
+
+.ozon-label {
+  font-size: 13px !important;
+  color: #666 !important;
+  font-family: system-ui, -apple-system, sans-serif !important;
+  white-space: nowrap !important;
+}
+
+#ozon-collect-btn {
+  background: #005bff !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 8px !important;
+  padding: 12px 20px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  box-shadow: 0 2px 12px rgba(0, 91, 255, 0.3) !important;
+  transition: all 0.2s ease !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  font-family: system-ui, -apple-system, sans-serif !important;
+}
+
+#ozon-collect-btn:hover {
+  background: #004de0 !important;
+  box-shadow: 0 4px 16px rgba(0, 91, 255, 0.4) !important;
+  transform: translateY(-1px) !important;
+}
+
+#ozon-collect-btn:disabled {
+  cursor: not-allowed !important;
+  transform: none !important;
+  opacity: 0.7 !important;
+}
+
+.ozon-spinner {
+  display: inline-block !important;
+  width: 14px !important;
+  height: 14px !important;
+  border: 2px solid rgba(255,255,255,0.3) !important;
+  border-top-color: white !important;
+  border-radius: 50% !important;
+  animation: ozon-spin 0.6s linear infinite !important;
+}
+
+@keyframes ozon-spin {
+  to { transform: rotate(360deg); }
+}

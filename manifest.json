@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Ozon Orders Table",
+  "version": "1.0.0",
+  "description": "Build an HTML table with product images from your Ozon e-check orders",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.ozon.ru/my/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.ozon.ru/my/e-check*", "https://www.ozon.ru/my/orderlist*"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
