@@ -21,16 +21,24 @@ function normalizeWhitespace(text) {
 
 function parseDateECheck(text) {
   const normalized = normalizeWhitespace(text);
-  const match = normalized.match(/(\d{1,2})\s+(\w+)\s+(\d{4})\s+в\s+(\d{2}):(\d{2})/);
+  const match = normalized.match(/(\d{1,2})\s+([а-яё]+)\s+(\d{4})\s+в\s+(\d{2}):(\d{2})/i);
   if (!match) return null;
   const [, day, monthWord, year, hour, minute] = match;
-  const month = MONTH_NAMES[monthWord];
+  const month = MONTH_NAMES[monthWord.toLowerCase()];
   if (month === undefined) return null;
   return new Date(+year, month, +day, +hour, +minute);
 }
 
 function parseDateOrderlist(text) {
   const normalized = normalizeWhitespace(text);
+  const relative = normalized.match(/^(сегодня|завтра)\s*(?:с\s+(\d{2}):(\d{2}))?/i);
+  if (relative) {
+    const now = new Date();
+    const shift = relative[1].toLowerCase() === 'завтра' ? 1 : 0;
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + shift);
+    if (relative[2]) d.setHours(+relative[2], +(relative[3] || 0), 0, 0);
+    return d;
+  }
   let match = normalized.match(/(\d{1,2})\s+([а-яё]+)\s*,/);
   if (!match) {
     match = normalized.match(/(\d{1,2})\s+([а-яё]+)/);
@@ -116,6 +124,7 @@ async function fetchPage(url) {
 }
 
 async function fetchItemNames(order) {
+  if (!order.link) return;
   const html = await fetchPage(order.link);
   if (!html) return;
 
@@ -293,32 +302,52 @@ function parseItemsFromOrderlist(container, orderStatus) {
   return items;
 }
 
+function djb2Hash(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(36);
+}
+
+function synthesizeOrderId(items, status, dateStr) {
+  const imgs = (items || []).map(it => (it.img || '').split('/').pop()).join(',');
+  const total = (items || []).reduce((s, it) => s + (it.price || 0), 0);
+  return 'local-' + djb2Hash(`${imgs}|${total}|${status || ''}|${dateStr || ''}`);
+}
+
+function parseOrderTotalPrice(container) {
+  const totalEl = container.querySelector('.w9d_12 .c35_5_2-a1');
+  if (!totalEl) return 0;
+  const text = normalizeWhitespace(totalEl.textContent);
+  return text ? parsePrice(text) : 0;
+}
+
 function parseOrderRowOrderlist(container) {
   const linkEl = container.querySelector('a.d8w_12[href*="orderdetails"], a[href*="orderdetails"]');
-  if (!linkEl) return null;
-
-  const link = linkEl.href;
-  const orderNum = extractOrderFromHref(link);
-  if (!orderNum) return null;
+  const link = linkEl ? linkEl.href : '';
+  const orderNum = link ? extractOrderFromHref(link) : '';
 
   const status = parseOrderStatusOrderlist(container);
 
   if (isCancelled(status) || isReceived(status)) {
-    return { id: orderNum, cancelled: true };
+    return { id: orderNum || synthesizeOrderId([], status, ''), cancelled: true };
   }
 
-  const dateEl = container.querySelector('.dw9_12 span.tsCompactControl500Medium');
+  // «Можно забирать»: в .dw9_12 указаны часы работы пункта, а не дата — не показываем
+  const pickupReady = status.toLowerCase().includes('можно забирать');
+  const dateEl = pickupReady ? null : container.querySelector('.dw9_12 span');
   const dateStr = dateEl ? normalizeWhitespace(dateEl.textContent) : '';
   const dateObj = dateStr ? parseDateOrderlist(dateStr) : null;
 
   const items = parseItemsFromOrderlist(container, status);
 
   return {
-    id: orderNum,
+    id: orderNum || synthesizeOrderId(items, status, dateStr),
     link: link,
     dateStr: dateStr,
     timestamp: dateObj ? dateObj.getTime() : 0,
-    price: 0,
+    price: parseOrderTotalPrice(container),
     items: items
   };
 }

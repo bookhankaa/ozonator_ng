@@ -84,6 +84,15 @@ function parseRussianDate(dateStr) {
     'июля': 6, 'августа': 7, 'сентября': 8, 'октября': 9, 'ноября': 10, 'декабря': 11
   };
   const normalized = dateStr.replace(/[\u00A0\u202F\u200B\u200C\u200D\uFEFF]/g, ' ').trim();
+  // Orderlist: "Сегодня с 09:00 до 21:00", "Завтра"
+  const relative = normalized.match(/^(сегодня|завтра)\s*(?:с\s+(\d{2}):(\d{2}))?/i);
+  if (relative) {
+    const now = new Date();
+    const shift = relative[1].toLowerCase() === 'завтра' ? 1 : 0;
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + shift);
+    if (relative[2]) d.setHours(parseInt(relative[2], 10), parseInt(relative[3] || '0', 10), 0, 0);
+    return d;
+  }
   // E-check: "16 августа 2026 в 02:03"
   let match = normalized.match(/(\d{1,2})\s([а-яё]+)\s(\d{4})\sв\s(\d{2}):(\d{2})/);
   if (match) {
@@ -284,11 +293,15 @@ function render() {
 
     // Order link cell
     const idTd = document.createElement('td');
-    const idLink = document.createElement('a');
-    idLink.href = row.orderLink;
-    idLink.target = '_blank';
-    idLink.textContent = row.orderId;
-    idTd.appendChild(idLink);
+    if (row.orderLink) {
+      const idLink = document.createElement('a');
+      idLink.href = row.orderLink;
+      idLink.target = '_blank';
+      idLink.textContent = row.orderId;
+      idTd.appendChild(idLink);
+    } else {
+      idTd.textContent = '—';
+    }
 
     // Date cell
     const dateTd = document.createElement('td');
