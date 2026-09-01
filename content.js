@@ -246,8 +246,12 @@ async function fetchOrderDetails(order) {
 
 // ---- Orderlist page functions ----
 
+function getOrderlistRoot() {
+  return document.querySelector('[data-widget="paginator"]') || document;
+}
+
 function findOrderRowsOrderlist() {
-  return [...document.querySelectorAll('div.dw8_12')];
+  return [...getOrderlistRoot().querySelectorAll('div.dw8_12')];
 }
 
 function parseOrderStatusOrderlist(container) {
@@ -362,7 +366,10 @@ function updateProgress(current, total, action) {
   if (!window._ozonBtn) return;
   const btn = window._ozonBtn;
   btn.disabled = true;
-  btn.innerHTML = `<span class="ozon-spinner"></span> ${action}... ${current}/${total}`;
+  let suffix = '';
+  if (total) suffix = ` ${current}/${total}`;
+  else if (current) suffix = ` ${current}`;
+  btn.innerHTML = `<span class="ozon-spinner"></span> ${action}...${suffix}`;
 }
 
 function resetButton() {
@@ -538,40 +545,38 @@ async function collectFromECheck(maxOrders) {
   saveAndShowResult();
 }
 
-async function collectFromOrderlist(maxOrders) {
-  updateProgress(0, maxOrders, 'Сбор заказов');
+async function preloadOrderlist() {
+  let prevCount = findOrderRowsOrderlist().length;
+  let stableRounds = 0;
+  const maxRounds = 60;
 
-  let noNewContentCount = 0;
-  const seenContainers = new Set();
-
-  while (orders.length < maxOrders && noNewContentCount < 5) {
+  for (let round = 0; round < maxRounds; round++) {
     const containers = findOrderRowsOrderlist();
-    let addedCount = 0;
+    if (containers.length === 0) break;
 
-    for (const container of containers) {
-      const parsed = parseOrderRowOrderlist(container);
-      if (!parsed || parsed.cancelled) continue;
+    updateProgress(containers.length, 0, 'Загрузка списка');
+    containers[containers.length - 1].scrollIntoView({ behavior: 'smooth', block: 'end' });
+    await sleep(2000);
 
-      // Skip if this exact DOM element was already processed
-      if (seenContainers.has(container)) continue;
-      seenContainers.add(container);
-
-      orders.push(parsed);
-      addedCount++;
-    }
-
-    if (orders.length === maxOrders) break;
-    if (addedCount === 0) {
-      noNewContentCount++;
+    const count = findOrderRowsOrderlist().length;
+    if (count === prevCount) {
+      stableRounds++;
+      if (stableRounds >= 2) break;
     } else {
-      noNewContentCount = 0;
+      stableRounds = 0;
+      prevCount = count;
     }
+  }
+}
 
-    if (orders.length < maxOrders && addedCount > 0) {
-      window.scrollBy({ top: 800, behavior: 'smooth' });
-      await sleep(1000);
-      updateProgress(orders.length, maxOrders, 'Сбор заказов');
-    }
+async function collectFromOrderlist(maxOrders) {
+  await preloadOrderlist();
+
+  const containers = findOrderRowsOrderlist();
+  for (const container of containers) {
+    const parsed = parseOrderRowOrderlist(container);
+    if (!parsed || parsed.cancelled) continue;
+    orders.push(parsed);
   }
 
   if (orders.length === 0) {
@@ -579,6 +584,8 @@ async function collectFromOrderlist(maxOrders) {
     isCollecting = false;
     return;
   }
+
+  if (orders.length > maxOrders) orders = orders.slice(0, maxOrders);
 
   for (let i = 0; i < orders.length; i++) {
     updateProgress(i + 1, orders.length, 'Загрузка названий');
