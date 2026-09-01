@@ -1,7 +1,7 @@
 let allOrders = [];
 let filteredRows = [];
 let sortField = 'date';
-let sortAsc = false;
+let sortAsc = true;
 const checkedState = new Map();
 
 async function init() {
