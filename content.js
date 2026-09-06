@@ -137,13 +137,13 @@ async function fetchItemNames(order) {
   for (const widget of widgets) {
     const rows = widget.querySelectorAll('.ek3_12');
     for (const row of rows) {
-      const img = row.querySelector('.aw15_5_2-a img');
+      const img = row.querySelector('img');
       if (!img) continue;
       let imgSrc = img.src || img.getAttribute('data-src');
       if (!imgSrc) continue;
       if (imgSrc.startsWith('//')) imgSrc = 'https:' + imgSrc;
       else if (imgSrc.startsWith('/')) imgSrc = 'https://www.ozon.ru' + imgSrc;
-      const nameEl = row.querySelector('.e5k_12.k5e_12 span.tsCompact500Medium');
+      const nameEl = row.querySelector('span.tsCompact500Medium');
       const name = nameEl ? nameEl.textContent.trim() : '';
       if (name) {
         nameMap.set(imgSrc, name);
@@ -214,7 +214,7 @@ async function fetchOrderDetails(order) {
 
     const productRows = widget.querySelectorAll('.ek3_12');
     for (const row of productRows) {
-      const img = row.querySelector('.aw15_5_2-a img');
+      const img = row.querySelector('img');
       if (!img) continue;
 
       let imgSrc = img.src || img.getAttribute('data-src');
@@ -227,10 +227,10 @@ async function fetchOrderDetails(order) {
       if (seenImages.has(imgHash)) continue;
       seenImages.add(imgHash);
 
-      const nameEl = row.querySelector('.e5k_12.k5e_12 span.tsCompact500Medium');
+      const nameEl = row.querySelector('span.tsCompact500Medium');
       const productName = nameEl ? nameEl.textContent.trim() : '';
 
-      const priceEl = row.querySelector('.c35_5_2-a1.tsHeadline400Small');
+      const priceEl = row.querySelector('span.tsHeadline400Small');
       const priceText = priceEl ? priceEl.textContent.trim() : '';
       const itemPrice = priceText ? parsePrice(priceText) : 0;
 
@@ -268,27 +268,31 @@ function parseOrderStatusOrderlist(container) {
 
 function parseItemsFromOrderlist(container, orderStatus) {
   const items = [];
-  const itemContainers = container.querySelectorAll('.h0c5_5_3-a1');
+  const imgs = Array.from(container.querySelectorAll('img')).filter(im =>
+    ((im.src || im.getAttribute('src')) || '').includes('ir.ozone.ru')
+  );
 
-  itemContainers.forEach(itemContainer => {
-    const img = itemContainer.querySelector('.aw15_5_2-a img');
-    if (!img) return;
+  for (const img of imgs) {
+    let cell = img.parentElement;
+    while (cell && cell !== container && !cell.querySelector('span.tsHeadline400Small')) {
+      cell = cell.parentElement;
+    }
+    if (!cell || cell === container) continue;
 
-    let imgSrc = img.src || img.getAttribute('data-src');
-    if (!imgSrc) return;
+    let imgSrc = img.src || img.getAttribute('src') || img.getAttribute('data-src');
+    if (!imgSrc) continue;
 
     if (imgSrc.startsWith('//')) imgSrc = 'https:' + imgSrc;
     else if (imgSrc.startsWith('/')) imgSrc = 'https://www.ozon.ru' + imgSrc;
 
-    const priceEl = itemContainer.querySelector('.c35_5_2-a0 span.tsHeadline400Small');
+    const priceEl = cell.querySelector('span.tsHeadline400Small');
     const priceText = priceEl ? normalizeWhitespace(priceEl.textContent) : '';
     const itemPrice = priceText ? parsePrice(priceText) : 0;
 
     // Payment badge: "Оплачен" / "Не оплачен"
     let payment = '';
-    const badges = itemContainer.querySelectorAll('.b5_7_3-a4[title]');
-    badges.forEach(badge => {
-      const title = normalizeWhitespace(badge.textContent);
+    cell.querySelectorAll('[title]').forEach(badge => {
+      const title = normalizeWhitespace(badge.getAttribute('title') || badge.textContent);
       if (title.toLowerCase().includes('оплач')) {
         payment = title;
       }
@@ -301,7 +305,7 @@ function parseItemsFromOrderlist(container, orderStatus) {
       status: orderStatus || '—',
       payment: payment
     });
-  });
+  }
 
   return items;
 }
@@ -320,11 +324,14 @@ function synthesizeOrderId(items, status, dateStr) {
   return 'local-' + djb2Hash(`${imgs}|${total}|${status || ''}|${dateStr || ''}`);
 }
 
-function parseOrderTotalPrice(container) {
-  const totalEl = container.querySelector('.w9d_12 .c35_5_2-a1');
-  if (!totalEl) return 0;
-  const text = normalizeWhitespace(totalEl.textContent);
-  return text ? parsePrice(text) : 0;
+function parseOrderTotalPrice(container, items) {
+  const totalEl = container.querySelector('.w9d_12 .tsHeadline400Small');
+  if (totalEl) {
+    const text = normalizeWhitespace(totalEl.textContent);
+    const total = text ? parsePrice(text) : 0;
+    if (total) return total;
+  }
+  return (items || []).reduce((sum, it) => sum + (it.price || 0), 0);
 }
 
 function parseOrderRowOrderlist(container) {
@@ -351,7 +358,7 @@ function parseOrderRowOrderlist(container) {
     link: link,
     dateStr: dateStr,
     timestamp: dateObj ? dateObj.getTime() : 0,
-    price: parseOrderTotalPrice(container),
+    price: parseOrderTotalPrice(container, items),
     items: items
   };
 }
