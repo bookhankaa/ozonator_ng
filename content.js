@@ -247,23 +247,43 @@ async function fetchOrderDetails(order) {
 // ---- Orderlist page functions ----
 
 function getOrderlistRoot() {
-  return document.querySelector('[data-widget="paginator"]') || document;
+  return document.querySelector('[data-widget="orderList"]') || document.querySelector('[data-widget="paginator"]') || document;
 }
 
 function findOrderRowsOrderlist() {
-  return [...getOrderlistRoot().querySelectorAll('div.dw8_12')];
+  const markerSel = 'a[href*="orderdetails"], img[src*="ir.ozone.ru"], img[data-src*="ir.ozone.ru"], span.tsHeadline550Medium';
+  const cards = [];
+  document.querySelectorAll('[data-widget="orderList"]').forEach(section => {
+    for (const child of section.children) {
+      if (child.matches('[data-widget]')) continue;
+      if (!child.querySelector(markerSel)) continue;
+      if (child.querySelectorAll('a[href*="orderdetails"]').length >= 3) {
+        for (const sub of child.children) {
+          if (!sub.matches('[data-widget]') && sub.querySelector(markerSel)) cards.push(sub);
+        }
+      } else {
+        cards.push(child);
+      }
+    }
+  });
+  if (cards.length > 0) return cards;
+  const root = getOrderlistRoot();
+  if (root === document) return [];
+  const fallback = new Set();
+  root.querySelectorAll('a[href*="orderdetails"]').forEach(link => {
+    let el = link.parentElement;
+    while (el && el !== root && el.querySelectorAll('a[href*="orderdetails"]').length > 1) {
+      el = el.parentElement;
+    }
+    if (el && el !== root) fallback.add(el);
+  });
+  return [...fallback];
 }
 
 function parseOrderStatusOrderlist(container) {
-  const statusEl = container.querySelector('.cy2_12');
-  if (statusEl) {
-    const children = statusEl.querySelectorAll('.tsHeadline550Medium');
-    if (children.length) {
-      return Array.from(children).map(c => normalizeWhitespace(c.textContent)).join(' ');
-    }
-    return normalizeWhitespace(statusEl.textContent);
-  }
-  return '';
+  const els = container.querySelectorAll('span.tsHeadline550Medium');
+  if (!els.length) return '';
+  return Array.from(els).map(e => normalizeWhitespace(e.textContent)).join(' ');
 }
 
 function parseItemsFromOrderlist(container, orderStatus) {
@@ -324,13 +344,7 @@ function synthesizeOrderId(items, status, dateStr) {
   return 'local-' + djb2Hash(`${imgs}|${total}|${status || ''}|${dateStr || ''}`);
 }
 
-function parseOrderTotalPrice(container, items) {
-  const totalEl = container.querySelector('.w9d_12 .tsHeadline400Small');
-  if (totalEl) {
-    const text = normalizeWhitespace(totalEl.textContent);
-    const total = text ? parsePrice(text) : 0;
-    if (total) return total;
-  }
+function parseOrderTotalPrice(items) {
   return (items || []).reduce((sum, it) => sum + (it.price || 0), 0);
 }
 
@@ -345,9 +359,9 @@ function parseOrderRowOrderlist(container) {
     return { id: orderNum || synthesizeOrderId([], status, ''), cancelled: true };
   }
 
-  // «Можно забирать»: в .dw9_12 указаны часы работы пункта, а не дата — не показываем
+  // «Можно забирать»: в tsCompactControl500Medium указаны часы работы пункта, а не дата — не показываем
   const pickupReady = status.toLowerCase().includes('можно забирать');
-  const dateEl = pickupReady ? null : container.querySelector('.dw9_12 span');
+  const dateEl = pickupReady ? null : container.querySelector('span.tsCompactControl500Medium');
   const dateStr = dateEl ? normalizeWhitespace(dateEl.textContent) : '';
   const dateObj = dateStr ? parseDateOrderlist(dateStr) : null;
 
@@ -358,7 +372,7 @@ function parseOrderRowOrderlist(container) {
     link: link,
     dateStr: dateStr,
     timestamp: dateObj ? dateObj.getTime() : 0,
-    price: parseOrderTotalPrice(container, items),
+    price: parseOrderTotalPrice(items),
     items: items
   };
 }
@@ -392,7 +406,7 @@ function injectButton() {
   pageType = detectPageType();
 
   const hasChequesWidget = document.querySelector('[data-widget="cheques"]');
-  const hasOrderlistWidget = document.querySelector('div.dw8_12');
+  const hasOrderlistWidget = document.querySelector('[data-widget="orderList"]');
   const hasOrderText = document.body && document.body.textContent.includes('Заказ \u2116');
 
   if (!hasChequesWidget && !hasOrderlistWidget && !hasOrderText) return;
@@ -558,17 +572,14 @@ async function preloadOrderlist() {
   const maxRounds = 60;
 
   for (let round = 0; round < maxRounds; round++) {
-    const containers = findOrderRowsOrderlist();
-    if (containers.length === 0) break;
-
-    updateProgress(containers.length, 0, 'Загрузка списка');
-    containers[containers.length - 1].scrollIntoView({ behavior: 'smooth', block: 'end' });
-    await sleep(2000);
+    updateProgress(prevCount, 0, 'Загрузка списка');
+    window.scrollBy({ top: 1500, behavior: 'smooth' });
+    await sleep(2500);
 
     const count = findOrderRowsOrderlist().length;
     if (count === prevCount) {
       stableRounds++;
-      if (stableRounds >= 2) break;
+      if (stableRounds >= 3) break;
     } else {
       stableRounds = 0;
       prevCount = count;
@@ -580,9 +591,17 @@ async function collectFromOrderlist(maxOrders) {
   await preloadOrderlist();
 
   const containers = findOrderRowsOrderlist();
+  const seenIds = new Set();
+  const seenImgSets = new Set();
   for (const container of containers) {
     const parsed = parseOrderRowOrderlist(container);
     if (!parsed || parsed.cancelled) continue;
+    if (!parsed.link && !(parsed.items || []).length) continue;
+    if (seenIds.has(parsed.id)) continue;
+    const imgSet = (parsed.items || []).map(it => (it.img || '').split('/').pop()).sort().join(',');
+    if (!parsed.link && imgSet && seenImgSets.has(imgSet)) continue;
+    seenIds.add(parsed.id);
+    if (imgSet) seenImgSets.add(imgSet);
     orders.push(parsed);
   }
 
@@ -652,7 +671,7 @@ const waitForAndInject = () => {
 
 const observer = new MutationObserver(() => {
   const hasCheques = document.querySelector('[data-widget="cheques"]');
-  const hasOrderlist = document.querySelector('div.dw8_12');
+  const hasOrderlist = document.querySelector('[data-widget="orderList"]');
   const hasOrderText = document.body && document.body.textContent.includes('Заказ \u2116');
   if (hasCheques || hasOrderlist || hasOrderText) {
     injectButton();
