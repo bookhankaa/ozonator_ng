@@ -95,11 +95,13 @@ function parseOrderRowECheck(li) {
   const orderNum = extractOrderFromHref(link);
   if (!orderNum) return null;
 
-  const dateEl = li.querySelector('span.hd8_12');
+  const dateEl = Array.from(li.querySelectorAll('span')).find(sp =>
+    /^\d{1,2}\s+[а-яё]+\s+\d{4}\s+в\s+\d{2}:\d{2}$/i.test(normalizeWhitespace(sp.textContent))
+  );
   const dateStr = dateEl ? normalizeWhitespace(dateEl.textContent) : '';
   const dateObj = dateStr ? parseDateECheck(dateStr) : null;
 
-  const priceEl = li.querySelector('strong.h8d_12');
+  const priceEl = Array.from(li.querySelectorAll('strong')).find(sp => /\d/.test(sp.textContent));
   const priceText = priceEl ? normalizeWhitespace(priceEl.textContent) : '';
   const price = priceText ? parsePrice(priceText) : 0;
 
@@ -131,6 +133,32 @@ function isLikelyName(text) {
   return digits * 2 < t.length;
 }
 
+function matchWidgetItems(widget) {
+  const isOzonImg = im => ((im.src || im.getAttribute('src') || im.getAttribute('data-src')) || '').includes('ir.ozone.ru');
+  const imgs = Array.from(widget.querySelectorAll('img')).filter(isOzonImg);
+  const nameSpans = Array.from(widget.querySelectorAll('span.tsCompact500Medium')).filter(s => isLikelyName(s.textContent));
+  const priceSpans = Array.from(widget.querySelectorAll('span.tsHeadline400Small'));
+
+  return imgs.map((img, i) => {
+    const next = imgs[i + 1];
+    const inWindow = el => {
+      if (!(img.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+      return !next || !!(el.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING);
+    };
+    let imgSrc = img.src || img.getAttribute('src') || img.getAttribute('data-src');
+    if (imgSrc.startsWith('//')) imgSrc = 'https:' + imgSrc;
+    else if (imgSrc.startsWith('/')) imgSrc = 'https://www.ozon.ru' + imgSrc;
+
+    const nameEl = nameSpans.find(inWindow);
+    const priceEl = priceSpans.find(inWindow);
+    return {
+      imgSrc: imgSrc,
+      name: nameEl ? nameEl.textContent.trim() : '',
+      priceText: priceEl ? normalizeWhitespace(priceEl.textContent) : ''
+    };
+  });
+}
+
 async function fetchItemNames(order) {
   if (!order.link) return;
   const html = await fetchPage(order.link);
@@ -143,25 +171,10 @@ async function fetchItemNames(order) {
   const nameByImgId = new Map();
   const widgets = doc.querySelectorAll('[data-widget="shipmentWidget"]');
   for (const widget of widgets) {
-    const imgs = Array.from(widget.querySelectorAll('img'));
-    for (const img of imgs) {
-      let imgSrc = img.src || img.getAttribute('src') || img.getAttribute('data-src');
-      if (!imgSrc || !imgSrc.includes('ir.ozone.ru')) continue;
-      if (imgSrc.startsWith('//')) imgSrc = 'https:' + imgSrc;
-      else if (imgSrc.startsWith('/')) imgSrc = 'https://www.ozon.ru' + imgSrc;
-
-      let name = '';
-      let el = img.parentElement;
-      while (el && el !== widget) {
-        for (const span of el.querySelectorAll('span.tsCompact500Medium')) {
-          if (isLikelyName(span.textContent)) { name = span.textContent.trim(); break; }
-        }
-        if (name) break;
-        el = el.parentElement;
-      }
-      if (!name) continue;
-      nameMap.set(imgSrc, name);
-      nameByImgId.set(imgSrc.split('/').pop(), name);
+    for (const info of matchWidgetItems(widget)) {
+      if (!info.name) continue;
+      nameMap.set(info.imgSrc, info.name);
+      nameByImgId.set(info.imgSrc.split('/').pop(), info.name);
     }
   }
 
@@ -185,33 +198,11 @@ async function fetchOrderDetails(order) {
   for (const widget of widgets) {
     let widgetStatus = '';
     let widgetCancelled = false;
-    const statusContainers = widget.querySelectorAll('.cy2_12');
-    for (const container of statusContainers) {
-      const texts = [];
-      container.querySelectorAll('.tsHeadline550Medium').forEach(span => {
-        texts.push(span.textContent.trim());
-      });
-      if (texts.length && texts.join(' ').toLowerCase().includes('отмен')) {
-        widgetCancelled = true;
-        widgetStatus = texts.join(' ');
-        break;
-      }
-      if (texts.length && !widgetStatus) {
-        widgetStatus = texts.join(' ');
-      }
-    }
-    if (!widgetStatus && !widgetCancelled) {
-      const headline = widget.querySelector('.tsHeadline550Medium');
-      if (headline) {
-        const cy3 = headline.closest('.cy2_12');
-        if (cy3) {
-          const allSpans = cy3.querySelectorAll('.tsHeadline550Medium');
-          widgetStatus = Array.from(allSpans).map(s => s.textContent.trim()).join(' ');
-          if (widgetStatus.toLowerCase().includes('отмен')) {
-            widgetCancelled = true;
-          }
-        }
-      }
+    const headlines = Array.from(widget.querySelectorAll('span.tsHeadline550Medium'))
+      .map(s => normalizeWhitespace(s.textContent)).filter(Boolean);
+    if (headlines.length) {
+      widgetStatus = headlines.join(' ');
+      if (widgetStatus.toLowerCase().includes('отмен')) widgetCancelled = true;
     }
     if (!widgetStatus && !widgetCancelled) {
       const dateSpan = widget.querySelector('.tsBodyControl500Medium');
@@ -225,32 +216,15 @@ async function fetchOrderDetails(order) {
       continue;
     }
 
-    const productRows = widget.querySelectorAll('.ek3_12');
-    for (const row of productRows) {
-      const img = row.querySelector('img');
-      if (!img) continue;
-
-      let imgSrc = img.src || img.getAttribute('data-src');
-      if (!imgSrc) continue;
-
-      if (imgSrc.startsWith('//')) imgSrc = 'https:' + imgSrc;
-      else if (imgSrc.startsWith('/')) imgSrc = 'https://www.ozon.ru' + imgSrc;
-
-      const imgHash = imgSrc.split('/').pop();
+    for (const info of matchWidgetItems(widget)) {
+      const imgHash = info.imgSrc.split('/').pop();
       if (seenImages.has(imgHash)) continue;
       seenImages.add(imgHash);
 
-      const nameEl = row.querySelector('span.tsCompact500Medium');
-      const productName = nameEl ? nameEl.textContent.trim() : '';
-
-      const priceEl = row.querySelector('span.tsHeadline400Small');
-      const priceText = priceEl ? priceEl.textContent.trim() : '';
-      const itemPrice = priceText ? parsePrice(priceText) : 0;
-
       order.items.push({
-        img: imgSrc,
-        name: productName,
-        price: itemPrice,
+        img: info.imgSrc,
+        name: info.name,
+        price: info.priceText ? parsePrice(info.priceText) : 0,
         status: widgetStatus || '—'
       });
     }
