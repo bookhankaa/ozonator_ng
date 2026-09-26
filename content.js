@@ -123,6 +123,14 @@ async function fetchPage(url) {
   }
 }
 
+function isLikelyName(text) {
+  const t = (text || '').trim();
+  if (t.length < 4) return false;
+  if (t.includes('\u20BD') || /руб/i.test(t)) return false;
+  const digits = (t.match(/\d/g) || []).length;
+  return digits * 2 < t.length;
+}
+
 async function fetchItemNames(order) {
   if (!order.link) return;
   const html = await fetchPage(order.link);
@@ -131,31 +139,36 @@ async function fetchItemNames(order) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
 
-  // Build map: img src hash -> name
   const nameMap = new Map();
+  const nameByImgId = new Map();
   const widgets = doc.querySelectorAll('[data-widget="shipmentWidget"]');
   for (const widget of widgets) {
-    const rows = widget.querySelectorAll('.ek3_12');
-    for (const row of rows) {
-      const img = row.querySelector('img');
-      if (!img) continue;
-      let imgSrc = img.src || img.getAttribute('data-src');
-      if (!imgSrc) continue;
+    const imgs = Array.from(widget.querySelectorAll('img'));
+    for (const img of imgs) {
+      let imgSrc = img.src || img.getAttribute('src') || img.getAttribute('data-src');
+      if (!imgSrc || !imgSrc.includes('ir.ozone.ru')) continue;
       if (imgSrc.startsWith('//')) imgSrc = 'https:' + imgSrc;
       else if (imgSrc.startsWith('/')) imgSrc = 'https://www.ozon.ru' + imgSrc;
-      const nameEl = row.querySelector('span.tsCompact500Medium');
-      const name = nameEl ? nameEl.textContent.trim() : '';
-      if (name) {
-        nameMap.set(imgSrc, name);
+
+      let name = '';
+      let el = img.parentElement;
+      while (el && el !== widget) {
+        for (const span of el.querySelectorAll('span.tsCompact500Medium')) {
+          if (isLikelyName(span.textContent)) { name = span.textContent.trim(); break; }
+        }
+        if (name) break;
+        el = el.parentElement;
       }
+      if (!name) continue;
+      nameMap.set(imgSrc, name);
+      nameByImgId.set(imgSrc.split('/').pop(), name);
     }
   }
 
-  // Match items by img src
   for (const item of (order.items || [])) {
-    if (nameMap.has(item.img)) {
-      item.name = nameMap.get(item.img);
-    }
+    const bySrc = nameMap.get(item.img);
+    const byId = nameByImgId.get((item.img || '').split('/').pop());
+    item.name = bySrc || byId || '';
   }
 }
 
