@@ -48,6 +48,7 @@ async function init() {
   document.getElementById('priceTo').addEventListener('input', render);
   document.getElementById('searchInput').addEventListener('input', render);
   document.getElementById('hideUnchecked').addEventListener('change', render);
+  document.getElementById('pinReady').addEventListener('change', render);
   document.getElementById('downloadBtn').addEventListener('click', downloadHTML);
   document.getElementById('toggleAll').addEventListener('click', invertChecked);
 
@@ -241,6 +242,15 @@ function applyFiltersAndSort() {
       ? (a.price || 0) - (b.price || 0)
       : (b.price || 0) - (a.price || 0);
   });
+
+  // «Прикрепить доставленные»: позиции, готовые к получению, — в начало, порядок внутри групп сохраняется
+  if (document.getElementById('pinReady').checked) {
+    const isReady = row => (row.status || '').includes('Можно забирать');
+    filteredRows = [
+      ...filteredRows.filter(isReady),
+      ...filteredRows.filter(row => !isReady(row))
+    ];
+  }
 }
 
 function render() {
