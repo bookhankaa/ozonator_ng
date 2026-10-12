@@ -29,7 +29,13 @@ async function init() {
   const toInput = document.getElementById('dateTo');
 
   if (allOrders.length > 0) {
-    const timestamps = allOrders.map(o => o.timestamp).filter(Boolean);
+    const timestamps = [];
+    allOrders.forEach(o => {
+      if (o.timestamp) timestamps.push(o.timestamp);
+      (o.items || []).forEach(it => {
+        if (it.timestamp) timestamps.push(it.timestamp);
+      });
+    });
     if (timestamps.length) {
       fromInput.min = formatInputDate(new Date(Math.min(...timestamps)));
       toInput.max = formatInputDate(new Date(Math.max(...timestamps)));
@@ -83,8 +89,8 @@ function parseRussianDate(dateStr) {
     'января': 0, 'февраля': 1, 'марта': 2, 'апреля': 3, 'мая': 4, 'июня': 5,
     'июля': 6, 'августа': 7, 'сентября': 8, 'октября': 9, 'ноября': 10, 'декабря': 11
   };
-  const normalized = dateStr.replace(/[\u00A0\u202F\u200B\u200C\u200D\uFEFF]/g, ' ').trim();
-  // Orderlist: "Сегодня с 09:00 до 21:00", "Завтра"
+  const normalized = dateStr.replace(/[\u00A0\u202F\u200B\u200C\u200D\uFEFF]/g, ' ').replace(/^(ожидаем|ожидается|заберут)\s+/i, '').trim();
+  // Orderlist: "Сегодня с 09:00 до 21:00", "Завтра", "Ожидаем завтра"
   const relative = normalized.match(/^(сегодня|завтра)\s*(?:с\s+(\d{2}):(\d{2}))?/i);
   if (relative) {
     const now = new Date();
@@ -125,7 +131,6 @@ function formatPrice(price) {
 function flattenOrders() {
   const rows = [];
   allOrders.forEach(order => {
-    const ts = order.timestamp || 0;
     if (order.items && order.items.length) {
       order.items.forEach(item => {
         let name = item.name || '';
@@ -147,8 +152,8 @@ function flattenOrders() {
           paid: paid,
           orderId: order.id,
           orderLink: order.link,
-          dateStr: order.dateStr || '—',
-          timestamp: ts,
+          dateStr: item.dateStr || order.dateStr || '—',
+          timestamp: item.timestamp || order.timestamp || 0,
           key: rowKey,
           checked: checkedState.get(rowKey) !== false
         });
@@ -164,7 +169,7 @@ function flattenOrders() {
         orderId: order.id,
         orderLink: order.link,
         dateStr: order.dateStr || '—',
-        timestamp: ts,
+        timestamp: order.timestamp || 0,
         key: rowKey,
         checked: checkedState.get(rowKey) !== false
       });

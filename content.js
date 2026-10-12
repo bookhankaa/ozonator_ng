@@ -30,7 +30,7 @@ function parseDateECheck(text) {
 }
 
 function parseDateOrderlist(text) {
-  const normalized = normalizeWhitespace(text);
+  const normalized = normalizeWhitespace(text).replace(/^(ожидаем|ожидается|заберут)\s+/i, '');
   const relative = normalized.match(/^(сегодня|завтра)\s*(?:с\s+(\d{2}):(\d{2}))?/i);
   if (relative) {
     const now = new Date();
@@ -279,7 +279,20 @@ function parseItemsFromOrderlist(container, orderStatus) {
     ((im.src || im.getAttribute('src')) || '').includes('ir.ozone.ru')
   );
 
-  for (const img of imgs) {
+  // Подписи позиций («Хранится до 25 октября») ищем по всему контейнеру и относим их к позиции
+  // по порядку документа: после картинки и до следующей картинки.
+  const storageEls = Array.from(container.querySelectorAll('span, div')).filter(el =>
+    /^хранится\s+до/i.test(normalizeWhitespace(el.textContent))
+  );
+
+  for (let i = 0; i < imgs.length; i++) {
+    const img = imgs[i];
+    const nextImg = imgs[i + 1];
+    const inWindow = el => {
+      if (!(img.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+      return !nextImg || !!(el.compareDocumentPosition(nextImg) & Node.DOCUMENT_POSITION_FOLLOWING);
+    };
+
     let cell = img.parentElement;
     while (cell && cell !== container && !cell.querySelector('span.tsHeadline400Small')) {
       cell = cell.parentElement;
@@ -305,12 +318,19 @@ function parseItemsFromOrderlist(container, orderStatus) {
       }
     });
 
+    // В пунктах выдачи вместо даты заказа у позиции срок хранения: «Хранится до 25 октября»
+    const storageEl = storageEls.find(el => inWindow(el) && !el.querySelector('span, div'));
+    const storageStr = storageEl ? normalizeWhitespace(storageEl.textContent) : '';
+    const storageDate = storageStr ? parseDateOrderlist(storageStr) : null;
+
     items.push({
       img: imgSrc,
       name: '',
       price: itemPrice,
       status: orderStatus || '—',
-      payment: payment
+      payment: payment,
+      dateStr: storageStr,
+      timestamp: storageDate ? storageDate.getTime() : 0
     });
   }
 
@@ -333,6 +353,90 @@ function synthesizeOrderId(items, status, dateStr) {
 
 function parseOrderTotalPrice(items) {
   return (items || []).reduce((sum, it) => sum + (it.price || 0), 0);
+}
+
+function parseStateAttr(raw) {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function decodeBase64Url(data) {
+  try {
+    const b64 = String(data).replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const bin = atob(padded);
+    const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+// Карточка пункта выдачи может объединять несколько заказов, и ссылок в DOM у неё нет.
+// Номера заказов лежат в состоянии виджета orderList: ссылка cacheOrderProducts с base64,
+// где у каждого заказа перечислены его картинки.
+function extractPickupOrderMap(state) {
+  const byImage = new Map();
+  if (!state || !Array.isArray(state.ordersV2)) return byImage;
+
+  for (const tile of state.ordersV2) {
+    const action = (tile.common || {}).action || {};
+    const fromLink = typeof action.link === 'string' && action.link.includes('cacheOrderProducts?data=')
+      ? action.link.split('cacheOrderProducts?data=')[1]
+      : '';
+    const encoded = (action.params && action.params.data) || fromLink;
+    if (!encoded) continue;
+
+    let payload;
+    try {
+      payload = JSON.parse(decodeBase64Url(encoded) || '');
+    } catch {
+      continue;
+    }
+    for (const order of payload.orders || []) {
+      for (const img of order.product_images || []) {
+        const file = String(img.link || '').split('/').pop();
+        if (file && order.order_number) byImage.set(file, order.order_number);
+      }
+    }
+  }
+  return byImage;
+}
+
+async function fetchPickupOrderMap() {
+  for (const el of document.querySelectorAll('[data-state]')) {
+    const map = extractPickupOrderMap(parseStateAttr(el.getAttribute('data-state')));
+    if (map.size) return map;
+  }
+
+  const html = await fetchPage('/my/orderlist/');
+  if (!html) return new Map();
+
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const el of doc.querySelectorAll('[data-state]')) {
+    const map = extractPickupOrderMap(parseStateAttr(el.getAttribute('data-state')));
+    if (map.size) return map;
+  }
+  return new Map();
+}
+
+function splitItemsByOrder(items, byImage) {
+  const groups = new Map();
+  const rest = [];
+  for (const item of items || []) {
+    const orderNum = byImage.get((item.img || '').split('/').pop());
+    if (!orderNum) {
+      rest.push(item);
+      continue;
+    }
+    if (!groups.has(orderNum)) groups.set(orderNum, []);
+    groups.get(orderNum).push(item);
+  }
+  return { groups, rest };
 }
 
 function parseOrderRowOrderlist(container) {
@@ -577,6 +681,9 @@ async function preloadOrderlist() {
 async function collectFromOrderlist(maxOrders) {
   await preloadOrderlist();
 
+  updateProgress(0, 0, 'Загрузка пунктов выдачи');
+  const pickupByImage = await fetchPickupOrderMap();
+
   const containers = findOrderRowsOrderlist();
   const seenIds = new Set();
   const seenImgSets = new Set();
@@ -584,12 +691,35 @@ async function collectFromOrderlist(maxOrders) {
     const parsed = parseOrderRowOrderlist(container);
     if (!parsed || parsed.cancelled) continue;
     if (!parsed.link && !(parsed.items || []).length) continue;
-    if (seenIds.has(parsed.id)) continue;
-    const imgSet = (parsed.items || []).map(it => (it.img || '').split('/').pop()).sort().join(',');
-    if (!parsed.link && imgSet && seenImgSets.has(imgSet)) continue;
-    seenIds.add(parsed.id);
+
+    // Карточка пункта выдачи без ссылки: раскладываем позиции по номерам заказов из состояния виджета
+    let leftover = parsed;
+    if (!parsed.link && pickupByImage.size) {
+      const { groups, rest } = splitItemsByOrder(parsed.items, pickupByImage);
+      if (groups.size) {
+        for (const [orderNum, groupItems] of groups) {
+          if (seenIds.has(orderNum)) continue;
+          seenIds.add(orderNum);
+          orders.push({
+            id: orderNum,
+            link: window.location.origin + '/my/orderdetails/?order=' + orderNum,
+            dateStr: '',
+            timestamp: 0,
+            price: parseOrderTotalPrice(groupItems),
+            items: groupItems
+          });
+        }
+        leftover = rest.length ? { ...parsed, items: rest } : null;
+      }
+    }
+    if (!leftover) continue;
+
+    if (seenIds.has(leftover.id)) continue;
+    const imgSet = (leftover.items || []).map(it => (it.img || '').split('/').pop()).sort().join(',');
+    if (!leftover.link && imgSet && seenImgSets.has(imgSet)) continue;
+    seenIds.add(leftover.id);
     if (imgSet) seenImgSets.add(imgSet);
-    orders.push(parsed);
+    orders.push(leftover);
   }
 
   if (orders.length === 0) {
