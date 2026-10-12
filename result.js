@@ -308,6 +308,7 @@ function render() {
 
     // Order link cell
     const idTd = document.createElement('td');
+    idTd.className = 'order-cell';
     if (row.orderLink) {
       const idLink = document.createElement('a');
       idLink.href = row.orderLink;
@@ -419,10 +420,26 @@ function invertChecked() {
   render();
 }
 
-function downloadHTML() {
+async function downloadHTML() {
+  let vendorCss = '';
+  try {
+    vendorCss = await (await fetch('vendor/bootstrap.min.css')).text();
+  } catch {
+    vendorCss = '';
+  }
+
   const clone = document.documentElement.cloneNode(true);
   clone.querySelectorAll('script').forEach(s => s.remove());
   clone.querySelectorAll('meta[name]').forEach(m => m.remove());
+  clone.querySelectorAll('link[rel="stylesheet"]').forEach(l => l.remove());
+
+  const head = clone.querySelector('head');
+  if (head) {
+    const inline = document.createElement('style');
+    inline.textContent = vendorCss;
+    head.prepend(inline);
+  }
+
   const html = '<!DOCTYPE html>\n' + clone.outerHTML;
   const blob = new Blob(['\uFEFF' + html], { type: 'text/html; charset=utf-8' });
   const url = URL.createObjectURL(blob);
